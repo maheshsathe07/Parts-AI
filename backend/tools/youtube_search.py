@@ -1,6 +1,6 @@
 import httpx
 from config import settings
-
+import certifi
 
 async def search_installation_videos(part_number: str, description: str) -> list[dict]:
     """
@@ -25,7 +25,7 @@ async def search_installation_videos(part_number: str, description: str) -> list
         "order": "relevance",
     }
 
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(timeout=15, verify=certifi.where()) as client:
         resp = await client.get(url, params=params)
         resp.raise_for_status()
         data = resp.json()

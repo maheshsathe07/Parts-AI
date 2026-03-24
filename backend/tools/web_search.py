@@ -8,7 +8,7 @@ unlike Google Custom Search Engine which can no longer search the entire web.
 """
 import httpx
 from config import settings
-
+import certifi
 
 async def _serpapi_search(query: str, num: int = 5, search_type: str = "search") -> dict:
     """
@@ -30,7 +30,7 @@ async def _serpapi_search(query: str, num: int = 5, search_type: str = "search")
     if search_type == "images":
         params["tbm"] = "isch"
 
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(timeout=20, verify=certifi.where()) as client:
         resp = await client.get(url, params=params)
         resp.raise_for_status()
         return resp.json()

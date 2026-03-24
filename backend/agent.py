@@ -6,6 +6,11 @@ All factual data comes from tool results (real internet searches).
 The LLM only synthesises / formats the gathered data — it never invents facts.
 """
 
+import os
+import certifi
+
+os.environ["SSL_CERT_FILE"] = certifi.where()
+
 import json
 import re
 from groq import AsyncGroq
@@ -14,8 +19,7 @@ from tools.registry import TOOL_DEFINITIONS, dispatch_tool
 
 client = AsyncGroq(api_key=settings.groq_api_key)
 
-MODEL = "llama-3.3-70b-versatile"   # Best freely available LLaMA-3 on Groq
-
+MODEL = "llama-3.3-70b-versatile"
 SYSTEM_PROMPT = """You are an expert automotive parts research assistant for a US-market automotive retail platform.
 
 Your ONLY job is to gather REAL data from the internet using the provided tools and then compile it into a structured JSON response.

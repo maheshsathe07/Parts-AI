@@ -1,3 +1,4 @@
+import certifi_win32
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routes.parts import router as parts_router

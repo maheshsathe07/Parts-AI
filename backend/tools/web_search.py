@@ -9,6 +9,31 @@ unlike Google Custom Search Engine which can no longer search the entire web.
 import httpx
 from config import settings
 import certifi
+from contextlib import asynccontextmanager
+
+# ── Connection pooling for better performance ─────────────────────────────────
+_http_client: httpx.AsyncClient | None = None
+
+
+async def get_http_client() -> httpx.AsyncClient:
+    """Get or create a shared HTTP client with connection pooling."""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(30.0, connect=10.0),
+            verify=certifi.where(),
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
+    return _http_client
+
+
+async def close_http_client():
+    """Close the shared HTTP client (call on app shutdown)."""
+    global _http_client
+    if _http_client is not None and not _http_client.is_closed:
+        await _http_client.aclose()
+        _http_client = None
+
 
 async def _serpapi_search(query: str, num: int = 5, search_type: str = "search") -> dict:
     """
@@ -30,10 +55,10 @@ async def _serpapi_search(query: str, num: int = 5, search_type: str = "search")
     if search_type == "images":
         params["tbm"] = "isch"
 
-    async with httpx.AsyncClient(timeout=20, verify=certifi.where()) as client:
-        resp = await client.get(url, params=params)
-        resp.raise_for_status()
-        return resp.json()
+    client = await get_http_client()
+    resp = await client.get(url, params=params)
+    resp.raise_for_status()
+    return resp.json()
 
 
 async def web_search(query: str, num: int = 5) -> list[dict]:

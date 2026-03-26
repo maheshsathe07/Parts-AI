@@ -2,6 +2,30 @@ import httpx
 from config import settings
 import certifi
 
+# ── Connection pooling for better performance ─────────────────────────────────
+_yt_http_client: httpx.AsyncClient | None = None
+
+
+async def get_youtube_http_client() -> httpx.AsyncClient:
+    """Get or create a shared HTTP client for YouTube API."""
+    global _yt_http_client
+    if _yt_http_client is None or _yt_http_client.is_closed:
+        _yt_http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(30.0, connect=10.0),
+            verify=certifi.where(),
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+    return _yt_http_client
+
+
+async def close_youtube_http_client():
+    """Close the shared HTTP client (call on app shutdown)."""
+    global _yt_http_client
+    if _yt_http_client is not None and not _yt_http_client.is_closed:
+        await _yt_http_client.aclose()
+        _yt_http_client = None
+
+
 async def search_installation_videos(part_number: str, description: str) -> list[dict]:
     """
     Uses YouTube Data API v3 to find installation / how-to videos
@@ -25,10 +49,10 @@ async def search_installation_videos(part_number: str, description: str) -> list
         "order": "relevance",
     }
 
-    async with httpx.AsyncClient(timeout=15, verify=certifi.where()) as client:
-        resp = await client.get(url, params=params)
-        resp.raise_for_status()
-        data = resp.json()
+    client = await get_youtube_http_client()
+    resp = await client.get(url, params=params)
+    resp.raise_for_status()
+    data = resp.json()
 
     videos = []
     for item in data.get("items", []):

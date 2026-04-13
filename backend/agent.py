@@ -15,7 +15,7 @@ os.environ["SSL_CERT_FILE"] = certifi.where()
 import asyncio
 import json
 import re
-from groq import AsyncGroq
+from openai import AsyncOpenAI
 from config import settings
 from tools.image_search import search_part_images
 from tools.web_search import (
@@ -27,9 +27,13 @@ from tools.web_search import (
 )
 from tools.youtube_search import search_installation_videos
 
-client = AsyncGroq(api_key=settings.groq_api_key)
+# Databricks AI Gateway client
+client = AsyncOpenAI(
+    api_key=settings.databricks_token,
+    base_url="https://55281934845796.ai-gateway.cloud.databricks.com/mlflow/v1"
+)
 
-MODEL = "llama-3.3-70b-versatile"
+MODEL = "databricks-gpt-5-4"
 SYSTEM_PROMPT = """You are an expert automotive parts research assistant for a US-market automotive retail platform.
 
 Your job is to synthesize pre-gathered research data into a structured JSON response.
@@ -46,10 +50,18 @@ You will receive data from multiple sources including:
 Based on ALL this data, output ONLY a single valid JSON object — no markdown fences, no extra text — with this exact structure:
 
 {
-  "detailed_description": "<string — comprehensive technical description from search results>",
-  "expected_lifetime": "<string — service life data from search results>",
-  "maintenance_and_safety": "<string — maintenance schedule and safety tips from search results>",
-  "failure_symptoms": "<string — symptoms and warning signs from search results>",
+  "detailed_description": "<string — 1-2 meaningful sentences, up to 50 words, clearly explaining what the part does and its purpose>",
+  "expected_lifetime": "<string — MUST be in MILES only (e.g., '50,000-80,000 miles') with a single line describing typical replacement interval>",
+  "maintenance_and_safety": [
+    "<First maintenance or safety tip as a complete sentence>",
+    "<Second maintenance or safety tip as a complete sentence>",
+    "..."
+  ],
+  "failure_symptoms": [
+    "<First symptom as a complete sentence>",
+    "<Second symptom as a complete sentence>",
+    "..."
+  ],
   "compatible_vehicles": [
     {"year": "...", "make": "...", "model": "...", "trim": "..."},
     ...
@@ -64,10 +76,14 @@ Based on ALL this data, output ONLY a single valid JSON object — no markdown f
 
 RULES:
 1. NEVER invent, guess, or hallucinate any data. Every fact must come from the provided search results.
-2. For compatible_vehicles, parse the fitment data carefully. Include year, make, model. Trim is optional.
-3. For installation_steps, extract numbered steps from the results. Aim for 6–12 clear steps.
-4. For sources, include unique URLs from all web search results.
-5. Do NOT include image or video data in your JSON — those are handled separately.
+2. For detailed_description: Write 1-2 meaningful sentences (up to 50 words) clearly explaining what the part does and why it's important.
+3. For expected_lifetime: Express ONLY in MILES (e.g., '60,000-100,000 miles'). Keep it to ONE line describing the typical mileage range for replacement.
+4. For compatible_vehicles: Parse fitment data carefully. DEDUPLICATE entries — merge overlapping year ranges for the same make/model/trim into a single entry with the widest year range (e.g., "1990-2000 Toyota Corolla" and "1994-2000 Toyota Corolla" become one entry: {"year": "1990-2000", "make": "Toyota", "model": "Corolla"}). Never list the same vehicle multiple times.
+5. For installation_steps, extract numbered steps from the results. Aim for 6–12 clear steps.
+6. For maintenance_and_safety, provide a LIST of 5-10 separate tips, each as one complete sentence.
+7. For failure_symptoms, provide a LIST of 4-8 observable symptoms, each as one complete sentence.
+8. For sources, include unique URLs from all web search results.
+9. Do NOT include image or video data in your JSON — those are handled separately.
 """
 
 
@@ -195,11 +211,96 @@ Extract sources (URLs) from all the search results above.
     final_text = response.choices[0].message.content or ""
     llm_data = _parse_json_from_text(final_text)
 
+    # ── Step 4: Post-process to deduplicate compatible vehicles ───────────────
+    if "compatible_vehicles" in llm_data:
+        llm_data["compatible_vehicles"] = _deduplicate_vehicles(llm_data["compatible_vehicles"])
+
     return {
         "llm_data": llm_data,
         "raw_images": raw_images,
         "raw_videos": raw_videos,
     }
+
+
+def _deduplicate_vehicles(vehicles: list) -> list:
+    """
+    Deduplicate compatible vehicles by merging overlapping year ranges
+    for the same make/model/trim combination.
+    """
+    if not vehicles or not isinstance(vehicles, list):
+        return vehicles
+
+    # Group vehicles by make+model+trim (case-insensitive)
+    grouped = {}
+    for v in vehicles:
+        if not isinstance(v, dict):
+            continue
+        
+        make = str(v.get("make", "")).strip().lower()
+        model = str(v.get("model", "")).strip().lower()
+        trim = str(v.get("trim", "")).strip().lower()
+        year_str = str(v.get("year", "")).strip()
+        
+        if not make or not model:
+            continue
+        
+        key = (make, model, trim)
+        
+        # Parse year range (e.g., "1986-1992" or "1991")
+        years = []
+        if "-" in year_str:
+            parts = year_str.split("-")
+            try:
+                years = [int(parts[0].strip()), int(parts[1].strip())]
+            except (ValueError, IndexError):
+                years = []
+        else:
+            try:
+                year = int(year_str)
+                years = [year, year]
+            except ValueError:
+                years = []
+        
+        if key not in grouped:
+            grouped[key] = {
+                "make": v.get("make", "").strip(),
+                "model": v.get("model", "").strip(),
+                "trim": v.get("trim", "").strip() if v.get("trim") else "",
+                "min_year": years[0] if years else None,
+                "max_year": years[1] if years else None
+            }
+        else:
+            # Merge year ranges
+            if years:
+                if grouped[key]["min_year"] is None or years[0] < grouped[key]["min_year"]:
+                    grouped[key]["min_year"] = years[0]
+                if grouped[key]["max_year"] is None or years[1] > grouped[key]["max_year"]:
+                    grouped[key]["max_year"] = years[1]
+    
+    # Build deduplicated list
+    result = []
+    for key, data in grouped.items():
+        entry = {
+            "make": data["make"],
+            "model": data["model"]
+        }
+        
+        # Format year range
+        if data["min_year"] and data["max_year"]:
+            if data["min_year"] == data["max_year"]:
+                entry["year"] = str(data["min_year"])
+            else:
+                entry["year"] = f"{data['min_year']}-{data['max_year']}"
+        
+        if data["trim"]:
+            entry["trim"] = data["trim"]
+        
+        result.append(entry)
+    
+    # Sort by make, model, year
+    result.sort(key=lambda x: (x.get("make", ""), x.get("model", ""), x.get("year", "")))
+    
+    return result
 
 
 def _parse_json_from_text(text: str) -> dict:

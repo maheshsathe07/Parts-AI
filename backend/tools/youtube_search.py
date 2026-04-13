@@ -33,7 +33,13 @@ async def search_installation_videos(part_number: str, description: str) -> list
     """
     url = "https://www.googleapis.com/youtube/v3/search"
 
-    query = f"how to install {description} {part_number} automotive DIY"
+    # Search for installation, usage, and configuration videos
+    queries = [
+        f"how to install {description} {part_number}",
+        f"why use {description} automotive",
+        f"{description} replacement configuration setup"
+    ]
+    query = " | ".join(queries[:2])  # Combine first two for broader results
 
     params = {
         "key": settings.youtube_api_key,

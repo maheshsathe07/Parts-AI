@@ -6,11 +6,10 @@ class PartInput(BaseModel):
     part_number: str
     description: str
     manufacturer_code: str
-    price: float
 
 
 class ResearchRequest(BaseModel):
-    part: PartInput
+    dataframe_records: list[PartInput]
 
 
 class PartImage(BaseModel):
@@ -34,18 +33,20 @@ class CompatibleVehicle(BaseModel):
     model: str
     trim: Optional[str] = None
 
-
 class PartResearchResult(BaseModel):
     part_number: str
     description: str
     manufacturer_code: str
-    price: float
+    price: Optional[float] = None
     images: list[PartImage]
     detailed_description: str
     expected_lifetime: str
-    maintenance_and_safety: str
-    failure_symptoms: str
+    maintenance_and_safety: list[str]
+    failure_symptoms: list[str]
     compatible_vehicles: list[CompatibleVehicle]
     installation_steps: list[str]
     installation_videos: list[YouTubeVideo]
     sources: list[str]
+
+class Prediction(BaseModel):
+    predictions: PartResearchResult
